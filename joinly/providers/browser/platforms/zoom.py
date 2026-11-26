@@ -376,7 +376,20 @@ class ZoomBrowserPlatformController(BaseBrowserPlatformController):
                     task.cancel()
 
     async def _activate_controls(self, page: Page) -> None:
-        """Activate control bar: a click, then the pointer over the bar's edge, which keeps it shown."""
+        """Activate control bar: a click, then the pointer over the bar's edge, which keeps it shown.
+
+        A notice Zoom keeps open until it is dismissed ("Got it") hides the rest of the
+        page from the accessibility tree and keeps the bar's menus from opening, so it is
+        dismissed first.
+        """
+        notices = page.locator("button", has_text=re.compile(r"^\s*got it\s*$", re.IGNORECASE))
+        for _ in range(3):
+            notice = _shown(notices)
+            if not await notice.count():
+                break
+            with contextlib.suppress(Exception):
+                await notice.click(timeout=1000)
+                await page.wait_for_timeout(200)
         await page.mouse.click(640, 360)
         await page.mouse.move(640, 600, steps=4)
         await page.wait_for_timeout(100)
