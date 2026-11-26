@@ -69,7 +69,11 @@ async def _log_state(button: Locator) -> None:
                 return {visibility: s.visibility, opacity: s.opacity, display: s.display,
                         rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)],
                         ariaHidden: !!b.closest('[aria-hidden="true"]'), inert: !!b.closest('[inert]'),
-                        viewport: [innerWidth, innerHeight], dialogs: dialogs.slice(0, 5)};
+                        viewport: [innerWidth, innerHeight], dialogs: dialogs.slice(0, 5),
+                        leaves: [...document.querySelectorAll('body *')]
+                            .filter(e => !e.children.length && /leave|end meeting/i.test(e.textContent || ''))
+                            .map(e => e.tagName + ':' + (e.textContent || '').trim().slice(0, 30)
+                                 + (e.offsetParent ? '' : '[hidden]')).slice(0, 10)};
             }"""
         )
         logger.warning("Zoom control state: %s", state)
@@ -190,7 +194,8 @@ class ZoomBrowserPlatformController(BaseBrowserPlatformController):
         await _log_state(leave_btn)
         await _press(leave_btn)
 
-        leave_btn_confirm = _shown(page.locator("button", has_text="leave meeting"))
+        # by its text: Zoom's confirmation is not always a <button>
+        leave_btn_confirm = _shown(page.get_by_text(re.compile(r"^\s*leave meeting\s*$", re.IGNORECASE)))
         if not await _appears(leave_btn_confirm):
             with contextlib.suppress(Exception):
                 await self._activate_controls(page)
