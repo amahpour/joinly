@@ -27,13 +27,29 @@ def _shown(locator: Locator) -> Locator:
     return locator.locator("visible=true").first
 
 
-async def _appears(locator: Locator, timeout: float = 3000) -> bool:  # noqa: ASYNC109
-    """Whether ``locator`` becomes visible within ``timeout`` milliseconds."""
+async def _appears(locator: Locator, timeout: float = 3000, state: str = "visible") -> bool:  # noqa: ASYNC109
+    """Whether ``locator`` reaches ``state`` within ``timeout`` milliseconds."""
     try:
-        await locator.wait_for(state="visible", timeout=timeout)
+        await locator.wait_for(state=state, timeout=timeout)  # type: ignore[arg-type]
     except Exception:  # noqa: BLE001
         return False
     return True
+
+
+async def _press(button: Locator) -> None:
+    """Click ``button``, or press it from script when Zoom's bar still hides it."""
+    if await button.is_visible():
+        await button.click(timeout=1000)
+    else:
+        await button.evaluate("b => b.click()")
+
+
+def _mic_buttons(page: Page) -> tuple[Locator, Locator]:
+    """The mute and unmute buttons, by their exact labels: one names the other's text."""
+    return (
+        page.locator('button[aria-label="mute my microphone" i]').first,
+        page.locator('button[aria-label="unmute my microphone" i]').first,
+    )
 
 
 class ZoomBrowserPlatformController(BaseBrowserPlatformController):
@@ -128,24 +144,25 @@ class ZoomBrowserPlatformController(BaseBrowserPlatformController):
     async def leave(self, page: Page) -> None:
         """Leave the Zoom meeting using the icon-based button.
 
-        Zoom's web client slides its control bar in after the pointer moves, so each
-        button is waited for, not checked once: a bar still moving read as missing, and
-        the bot stayed in the call.
+        Zoom's web client hides its control bar, from sight and from the accessibility
+        tree, until the pointer moves. So the button is found by its label, not its role,
+        and pressed directly when the bar is still hidden: a role lookup read it as
+        missing, and the bot stayed in the call.
         """
         await self._activate_controls(page)
 
-        leave_btn = _shown(page.get_by_role("button", name=re.compile(r"leave", re.IGNORECASE)))
-        if not await _appears(leave_btn):
+        leave_btn = page.locator('button[aria-label="leave" i]').first
+        if not await _appears(leave_btn, state="attached"):
             await self._log_buttons(page)
             msg = "Leave button not found or not visible."
             raise RuntimeError(msg)
-        await leave_btn.click(timeout=1000)
+        await _press(leave_btn)
 
         leave_btn_confirm = _shown(page.locator("button", has_text="leave meeting"))
         if not await _appears(leave_btn_confirm):
             with contextlib.suppress(Exception):
                 await self._activate_controls(page)
-                await leave_btn.click(timeout=1000)
+                await _press(leave_btn)
 
         if not await _appears(leave_btn_confirm):
             await self._log_buttons(page)
@@ -263,31 +280,28 @@ class ZoomBrowserPlatformController(BaseBrowserPlatformController):
         """Mute the microphone in Zoom."""
         await self._activate_controls(page)
 
-        # anchored: a plain "mute my microphone" also names the unmute button
-        mute_btn = _shown(page.get_by_role("button", name=re.compile(r"^mute", re.IGNORECASE)))
-        unmute_btn = _shown(page.get_by_role("button", name=re.compile(r"^unmute", re.IGNORECASE)))
-        if not await _appears(mute_btn.or_(unmute_btn).first):
+        mute_btn, unmute_btn = _mic_buttons(page)
+        if not await _appears(mute_btn.or_(unmute_btn).first, state="attached"):
             await self._log_buttons(page)
             msg = "Mute button not found or not visible."
             raise RuntimeError(msg)
-        if await mute_btn.is_visible():
-            await mute_btn.click(timeout=1000)
+        if await mute_btn.count():
+            await _press(mute_btn)
 
     async def unmute(self, page: Page) -> None:
         """Unmute the microphone in Zoom."""
         await self._activate_controls(page)
 
-        unmute_btn = _shown(page.get_by_role("button", name=re.compile(r"^unmute", re.IGNORECASE)))
-        mute_btn = _shown(page.get_by_role("button", name=re.compile(r"^mute", re.IGNORECASE)))
-        if not await _appears(unmute_btn.or_(mute_btn).first):
+        mute_btn, unmute_btn = _mic_buttons(page)
+        if not await _appears(unmute_btn.or_(mute_btn).first, state="attached"):
             await self._log_buttons(page)
             msg = "Unmute button not found or not visible."
             raise RuntimeError(msg)
-        if await unmute_btn.is_visible():
-            await unmute_btn.click(timeout=1000)
-            if await _appears(unmute_btn, timeout=500):
+        if await unmute_btn.count():
+            await _press(unmute_btn)
+            if await _appears(unmute_btn, timeout=500, state="attached") and not await mute_btn.count():
                 with contextlib.suppress(Exception):
-                    await unmute_btn.click(timeout=1000)
+                    await _press(unmute_btn)
 
     async def share_screen(self, page: Page) -> None:
         """Start sharing screen in the Zoom meeting.
