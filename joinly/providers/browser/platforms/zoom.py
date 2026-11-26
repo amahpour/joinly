@@ -37,11 +37,42 @@ async def _appears(locator: Locator, timeout: float = 3000, state: str = "visibl
 
 
 async def _press(button: Locator) -> None:
-    """Click ``button``, or press it from script when Zoom's bar still hides it."""
+    """Press ``button`` with the pointer: Zoom opens its menus on a real press, not a script's.
+
+    A button in a hidden bar is hovered first, which shows the bar; a script's click is
+    the last resort.
+    """
+    if not await button.is_visible():
+        box = await button.bounding_box()
+        if box:
+            await button.page.mouse.move(
+                box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, steps=4
+            )
+            await _appears(button, timeout=1500)
     if await button.is_visible():
         await button.click(timeout=1000)
-    else:
+        return
+    try:
+        await button.click(timeout=1000, force=True)
+    except Exception:  # noqa: BLE001
         await button.evaluate("b => b.click()")
+
+
+async def _log_state(button: Locator) -> None:
+    """Log how ``button`` is shown and what overlays the page, to find a control Zoom moved."""
+    with contextlib.suppress(Exception):
+        state = await button.evaluate(
+            """b => {
+                const s = getComputedStyle(b), r = b.getBoundingClientRect();
+                const dialogs = [...document.querySelectorAll('[role=dialog],[role=menu],[role=alertdialog]')]
+                    .map(d => (d.getAttribute('aria-label') || d.innerText || '').trim().slice(0, 60));
+                return {visibility: s.visibility, opacity: s.opacity, display: s.display,
+                        rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)],
+                        ariaHidden: !!b.closest('[aria-hidden="true"]'), inert: !!b.closest('[inert]'),
+                        viewport: [innerWidth, innerHeight], dialogs: dialogs.slice(0, 5)};
+            }"""
+        )
+        logger.warning("Zoom control state: %s", state)
 
 
 def _mic_buttons(page: Page) -> tuple[Locator, Locator]:
@@ -156,6 +187,7 @@ class ZoomBrowserPlatformController(BaseBrowserPlatformController):
             await self._log_buttons(page)
             msg = "Leave button not found or not visible."
             raise RuntimeError(msg)
+        await _log_state(leave_btn)
         await _press(leave_btn)
 
         leave_btn_confirm = _shown(page.locator("button", has_text="leave meeting"))
@@ -166,6 +198,7 @@ class ZoomBrowserPlatformController(BaseBrowserPlatformController):
 
         if not await _appears(leave_btn_confirm):
             await self._log_buttons(page)
+            await _log_state(leave_btn)
             msg = "Leave meeting confirmation button not found or not visible."
             raise RuntimeError(msg)
         await leave_btn_confirm.click(timeout=1000)
