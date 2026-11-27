@@ -58,6 +58,14 @@ async def _press(button: Locator) -> None:
         await button.evaluate("b => b.click()")
 
 
+async def _activate(page: Page, control: Locator) -> None:
+    """Activate ``control`` from the keyboard: focus it, then Enter. Zoom's Leave opens its
+    confirmation this way when a pointer press does not (#956)."""
+    with contextlib.suppress(Exception):
+        await control.focus(timeout=1000)
+        await page.keyboard.press("Enter")
+
+
 async def _log_state(button: Locator) -> None:
     """Log how ``button`` is shown and what overlays the page, to find a control Zoom moved."""
     with contextlib.suppress(Exception):
@@ -191,15 +199,18 @@ class ZoomBrowserPlatformController(BaseBrowserPlatformController):
             await self._log_buttons(page)
             msg = "Leave button not found or not visible."
             raise RuntimeError(msg)
-        await _log_state(leave_btn)
-        await _press(leave_btn)
-
         # by its text: Zoom's confirmation is not always a <button>
         leave_btn_confirm = _shown(page.get_by_text(re.compile(r"^\s*leave meeting\s*$", re.IGNORECASE)))
+        # Zoom's web client (2026) opens the confirmation when Leave is activated from the keyboard;
+        # a pointer press only highlights the button (the self-test's screenshots, #956). The
+        # pointer stays the fallback, for a version that wants it.
+        await _activate(page, leave_btn)
+        if not await _appears(leave_btn_confirm):
+            await _press(leave_btn)
         if not await _appears(leave_btn_confirm):
             with contextlib.suppress(Exception):
                 await self._activate_controls(page)
-                await _press(leave_btn)
+            await _activate(page, leave_btn)
 
         if not await _appears(leave_btn_confirm):
             await self._log_buttons(page)
@@ -207,6 +218,8 @@ class ZoomBrowserPlatformController(BaseBrowserPlatformController):
             msg = "Leave meeting confirmation button not found or not visible."
             raise RuntimeError(msg)
         await leave_btn_confirm.click(timeout=1000)
+        if await _appears(leave_btn_confirm, timeout=1000):  # still open: confirm from the keyboard too
+            await _activate(page, leave_btn_confirm)
         await page.wait_for_timeout(500)
 
     async def send_chat_message(self, page: Page, message: str) -> None:
