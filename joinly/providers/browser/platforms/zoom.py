@@ -485,11 +485,16 @@ class ZoomBrowserPlatformController(BaseBrowserPlatformController):
             (nameArg) => {
                 const emit = n => window.report(n);
                 const find = () => {
+                    // During a screen share the shared content takes the main view, and the
+                    // active speaker's tile moves to the floating window (the suspension
+                    // container), so it is read last: outside a share that window holds the
+                    // bot's own tile, which the name check below skips.
                     const selectors = [
                         'div.single-main-container__video-frame span',
                         'div.speaker-active-container__video-frame span',
                         'div.speaker-bar-container__video-frame--active span',
                         'div.speaker-bar-container__video-frame span',
+                        'div.single-suspension-container__video-frame span',
                     ];
 
                     const name = selectors
